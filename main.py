@@ -1,5 +1,8 @@
 import os
 import logging
+import threading
+import http.server
+import socketserver
 from typing import List, Union, Optional
 
 from telegram import (
@@ -27,19 +30,19 @@ TEST_LINK = "https://softskills.rsv.ru/"
 
 # callback-ключи
 CB_TEST        = "test"
-CB_GUIDE_OPEN  = "guide_open"   # открыть инструкцию с сохранённого шага (по умолчанию с 1-го)
-CB_GUIDE_FAST  = "guide_fast"   # быстро к пункту 4 (индекс 3)
-CB_GUIDE_NEXT  = "guide_next"   # guide_next:<idx>
-CB_GUIDE_PREV  = "guide_prev"   # guide_prev:<idx>
-CB_GUIDE_MENU  = "guide_menu"   # главное меню (возврат)
-CB_EVENTS      = "events"       # ближайшие анонсы/мероприятия
+CB_GUIDE_OPEN  = "guide_open"
+CB_GUIDE_FAST  = "guide_fast"
+CB_GUIDE_NEXT  = "guide_next"
+CB_GUIDE_PREV  = "guide_prev"
+CB_GUIDE_MENU  = "guide_menu"
+CB_EVENTS      = "events"
 
 # ===== Данные по анонсам =====
 EVENTS: List[dict] = [
     # {"title": "Бизнес‑день в Губкинском", "date": "09.11, 14:00", "link": "https://t.me/gubkinsoft"},
 ]
 
-# Фото капибары (прямой доступ через Google Drive uc?export=view&id=...)
+# Фото капибары (прямой доступ Google Drive: uc?export=view&id=...)
 CAPYBARA_PHOTO_URL = "https://drive.google.com/uc?export=view&id=1iMD-ztr-hyo3GRn-z-XpJGevGeg0Pswh"
 
 # ===== Разметка =====
@@ -97,6 +100,7 @@ GUIDE_TEXTS: List[str] = [
     "— Опросник мотиваторов и демотиваторов\n\n"
     "Остальные инструменты — по желанию."
 ]
+
 GUIDE_MEDIA: List[Union[None, str, List[str]]] = [
     "https://drive.google.com/uc?export=view&id=1cAedHiYboYhhmPNTvtp2TODSQg2Diwd2",
     "https://drive.google.com/uc?export=view&id=1o-yeU9jBBTVLnPlVsyqZMJsXAv1VYok9",
@@ -164,7 +168,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Готовлю главное меню…"
     )
     await context.bot.send_message(chat.id, greeting)
-
     await show_main_menu(context, chat.id)
 
 # ===== /help =====
@@ -213,13 +216,13 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == CB_EVENTS:
-        # 1) всегда отправляем только картинку без подписи
+        # 1) только картинка без подписи
         try:
             await chat_msg.reply_photo(photo=CAPYBARA_PHOTO_URL)
         except Exception as e:
             log.warning("Не удалось отправить фото анонсов: %s", e)
 
-        # 2) затем отдельным сообщением текст
+        # 2) затем текст (пусто или список)
         if not EVENTS:
             placeholder = (
                 "Пока здесь пусто — команда уже подбирает самые интересные события. "
@@ -247,6 +250,14 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_main_menu(context, chat_id)
         return
 
+# ===== Простая «заглушка» HTTP-порта для Render Free Web Service =====
+def run_health_server():
+    port = int(os.environ.get("PORT", "10000"))  # Render назначает PORT
+    handler = http.server.SimpleHTTPRequestHandler
+    with socketserver.TCPServer(("", port), handler) as httpd:
+        log.info("Health server started on port %s", port)
+        httpd.serve_forever()
+
 # ===== Установка системных команд =====
 async def post_init(application: Application) -> None:
     try:
@@ -261,12 +272,13 @@ async def post_init(application: Application) -> None:
 
 # ===== Точка входа =====
 def main():
-    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+    # Запускаем «заглушку» порта, чтобы пройти порт‑скан Render (для бесплатного Web Service)
+    threading.Thread(target=run_health_server, daemon=True).start()
 
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CallbackQueryHandler(on_button))
-
     app.run_polling(allowed_updates=["message", "callback_query"])
 
 if __name__ == "__main__":
