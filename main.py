@@ -36,8 +36,13 @@ CB_EVENTS      = "events"       # ближайшие анонсы/меропри
 
 # ===== Данные по анонсам =====
 EVENTS: List[dict] = [
+    # Пример:
     # {"title": "Бизнес‑день в Губкинском", "date": "09.11, 14:00", "link": "https://t.me/gubkinsoft"},
 ]
+
+# Фото капибары для раздела «Анонсы»
+# Прямой доступ к картинке Google Drive через формат uc?export=view&id=<FILE_ID>
+CAPYBARA_PHOTO_URL = "https://drive.google.com/uc?export=view&id=1iMD-ztr-hyo3GRn-z-XpJGevGeg0Pswh"
 
 # ===== Разметка =====
 def kb_main() -> InlineKeyboardMarkup:
@@ -154,7 +159,7 @@ async def show_main_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int, targe
     sent = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=kb_main())
     context.user_data["last_menu_id"] = sent.message_id
 
-# ===== /start — приветствие по имени (без текста про «прогрев») =====
+# ===== /start — приветствие =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user = update.effective_user
@@ -220,6 +225,12 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == CB_EVENTS:
         if not EVENTS:
+            # Сначала отправим фото-обложку для анонсов
+            try:
+                await chat_msg.reply_photo(photo=CAPYBARA_PHOTO_URL, caption="Ближайшие анонсы и мероприятия:")
+            except Exception as e:
+                log.warning("Не удалось отправить фото анонсов: %s", e)
+
             placeholder = (
                 "Пока здесь пусто — команда уже подбирает самые интересные события. "
                 "Как только появятся ближайшие мероприятия, бот первым сообщит ✨"
@@ -228,7 +239,13 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["last_menu_id"] = sent.message_id
             return
 
-        lines = ["Ближайшие анонсы и мероприятия:"]
+        # Если события есть: фото + список с кнопками
+        try:
+            await chat_msg.reply_photo(photo=CAPYBARA_PHOTO_URL, caption="Ближайшие анонсы и мероприятия:")
+        except Exception as e:
+            log.warning("Не удалось отправить фото анонсов: %s", e)
+
+        lines = []
         buttons: List[List[InlineKeyboardButton]] = []
         for i, e in enumerate(EVENTS, start=1):
             title = e.get("title", "Событие")
