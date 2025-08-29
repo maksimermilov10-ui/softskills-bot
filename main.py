@@ -252,9 +252,13 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===== Простая «заглушка» HTTP-порта для Render Free Web Service =====
 def run_health_server():
-    port = int(os.environ.get("PORT", "10000"))  # Render назначает PORT
+    port = int(os.environ.get("PORT", "10000"))  # Render задаёт PORT
     handler = http.server.SimpleHTTPRequestHandler
-    with socketserver.TCPServer(("", port), handler) as httpd:
+    # Отключим шумные логи SimpleHTTPRequestHandler
+    class QuietHandler(handler):
+        def log_message(self, format, *args):  # noqa: N802
+            return
+    with socketserver.TCPServer(("", port), QuietHandler) as httpd:
         log.info("Health server started on port %s", port)
         httpd.serve_forever()
 
@@ -272,9 +276,10 @@ async def post_init(application: Application) -> None:
 
 # ===== Точка входа =====
 def main():
-    # Запускаем «заглушку» порта, чтобы пройти порт‑скан Render (для бесплатного Web Service)
-    threading.Thread(target=run_health_server, daemon=True).start()
+    # 1) Запускаем health-сервер в отдельном демоническом потоке
+    threading.Thread(target=run_health_server, daemon=True).start()  # не блокирует основной поток
 
+    # 2) Запускаем Telegram-бота (async-loop внутри run_polling)
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
