@@ -36,12 +36,10 @@ CB_EVENTS      = "events"       # ближайшие анонсы/меропри
 
 # ===== Данные по анонсам =====
 EVENTS: List[dict] = [
-    # Пример:
     # {"title": "Бизнес‑день в Губкинском", "date": "09.11, 14:00", "link": "https://t.me/gubkinsoft"},
 ]
 
-# Фото капибары для раздела «Анонсы»
-# Прямой доступ к картинке Google Drive через формат uc?export=view&id=<FILE_ID>
+# Фото капибары (прямой доступ через Google Drive uc?export=view&id=...)
 CAPYBARA_PHOTO_URL = "https://drive.google.com/uc?export=view&id=1iMD-ztr-hyo3GRn-z-XpJGevGeg0Pswh"
 
 # ===== Разметка =====
@@ -99,8 +97,6 @@ GUIDE_TEXTS: List[str] = [
     "— Опросник мотиваторов и демотиваторов\n\n"
     "Остальные инструменты — по желанию."
 ]
-
-# Прямые ссылки Google Drive
 GUIDE_MEDIA: List[Union[None, str, List[str]]] = [
     "https://drive.google.com/uc?export=view&id=1cAedHiYboYhhmPNTvtp2TODSQg2Diwd2",
     "https://drive.google.com/uc?export=view&id=1o-yeU9jBBTVLnPlVsyqZMJsXAv1VYok9",
@@ -139,10 +135,6 @@ async def send_guide_step(msg_target, idx: int):
 
 # ===== Главное меню =====
 async def show_main_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int, target_message_id: Optional[int] = None) -> None:
-    """
-    Если target_message_id задан — попробуем преобразовать это сообщение в меню,
-    иначе отправим новое сообщение с меню.
-    """
     text = "Главное меню. Выбирай действие:"
 
     if target_message_id is not None:
@@ -159,23 +151,20 @@ async def show_main_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int, targe
     sent = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=kb_main())
     context.user_data["last_menu_id"] = sent.message_id
 
-# ===== /start — приветствие =====
+# ===== /start =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user = update.effective_user
     name = ((user.first_name or "").strip()) or "друг"
 
-    # Небольшой UX: «печатает…»
     await context.bot.send_chat_action(chat_id=chat.id, action=ChatAction.TYPING)
 
-    # Короткое приветствие и пояснение назначения
     greeting = (
         f"Привет, {name}! Это бот для тестирования.\n\n"
         "Готовлю главное меню…"
     )
     await context.bot.send_message(chat.id, greeting)
 
-    # Меню отдельным сообщением
     await show_main_menu(context, chat.id)
 
 # ===== /help =====
@@ -224,13 +213,14 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == CB_EVENTS:
-        if not EVENTS:
-            # Сначала отправим фото-обложку для анонсов
-            try:
-                await chat_msg.reply_photo(photo=CAPYBARA_PHOTO_URL, caption="Ближайшие анонсы и мероприятия:")
-            except Exception as e:
-                log.warning("Не удалось отправить фото анонсов: %s", e)
+        # 1) всегда отправляем только картинку без подписи
+        try:
+            await chat_msg.reply_photo(photo=CAPYBARA_PHOTO_URL)
+        except Exception as e:
+            log.warning("Не удалось отправить фото анонсов: %s", e)
 
+        # 2) затем отдельным сообщением текст
+        if not EVENTS:
             placeholder = (
                 "Пока здесь пусто — команда уже подбирает самые интересные события. "
                 "Как только появятся ближайшие мероприятия, бот первым сообщит ✨"
@@ -238,12 +228,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sent = await chat_msg.reply_text(placeholder, reply_markup=kb_main())
             context.user_data["last_menu_id"] = sent.message_id
             return
-
-        # Если события есть: фото + список с кнопками
-        try:
-            await chat_msg.reply_photo(photo=CAPYBARA_PHOTO_URL, caption="Ближайшие анонсы и мероприятия:")
-        except Exception as e:
-            log.warning("Не удалось отправить фото анонсов: %s", e)
 
         lines = []
         buttons: List[List[InlineKeyboardButton]] = []
@@ -263,7 +247,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_main_menu(context, chat_id)
         return
 
-# ===== Установка системных команд (не падаем при ошибке) =====
+# ===== Установка системных команд =====
 async def post_init(application: Application) -> None:
     try:
         await application.bot.set_my_commands(
