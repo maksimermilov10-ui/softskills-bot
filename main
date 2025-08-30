@@ -1,11 +1,12 @@
 import os
 import logging
-from datetime import datetime, timedelta, timezone
 from typing import List, Union, Optional
+from contextlib import asynccontextmanager
+from http import HTTPStatus
+from pathlib import Path
 
 from fastapi import FastAPI, Request, Response, status
-from http import HTTPStatus
-from contextlib import asynccontextmanager
+from fastapi.staticfiles import StaticFiles
 
 from telegram import (
     Update,
@@ -24,22 +25,31 @@ from telegram.constants import ChatAction
 
 # ===== Логи =====
 logging.basicConfig(
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s", level=logging.INFO
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    level=logging.INFO,
 )
 log = logging.getLogger("softskills-bot")
 
 # ===== Конфигурация =====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise SystemExit('Не задан BOT_TOKEN. Выполнить: export BOT_TOKEN="<токен>"')  # [1]
+    raise SystemExit('Не задан BOT_TOKEN. Выполнить: export BOT_TOKEN="<токен>"')  # [6]
 
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 if not PUBLIC_BASE_URL:
-    log.warning("PUBLIC_BASE_URL пуст — вебхук не сможет установиться автоматически.")  # [1]
+    log.warning("PUBLIC_BASE_URL пуст — вебхук не сможет установиться автоматически.")  # [6]
 
 TEST_LINK = "https://softskills.rsv.ru/"
 
-# callback-ключи
+# ===== Пути к локальным изображениям =====
+STATIC_DIR = Path(__file__).parent / "static"
+IMAGES_DIR = STATIC_DIR / "images"
+IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+
+def media_path(name: str) -> Path:
+    return IMAGES_DIR / name  # [7]
+
+# ===== Кнопки/колбэки =====
 CB_TEST = "test"
 CB_GUIDE_OPEN = "guide_open"
 CB_GUIDE_FAST = "guide_fast"
@@ -51,10 +61,7 @@ CB_EVENTS = "events"
 # ===== Данные по анонсам =====
 EVENTS: List[dict] = [
     # {"title": "Бизнес‑день в Губкинском", "date": "09.11, 14:00", "link": "https://t.me/gubkinsoft"},
-]  # [1]
-
-# Фото (если понадобится)
-CAPYBARA_PHOTO_URL = "https://drive.google.com/uc?export=view&id=1iMD-ztr-hyo3GRn-z-XpJGevGeg0Pswh"  # [1]
+]
 
 # ===== Разметка =====
 def kb_main() -> InlineKeyboardMarkup:
@@ -65,7 +72,7 @@ def kb_main() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("Уже зарегистрирован(а)", callback_data=CB_GUIDE_FAST)],
             [InlineKeyboardButton("Ближайшие анонсы и мероприятия", callback_data=CB_EVENTS)],
         ]
-    )  # [1]
+    )
 
 def kb_guide(idx: int, last: int) -> InlineKeyboardMarkup:
     row = []
@@ -74,7 +81,7 @@ def kb_guide(idx: int, last: int) -> InlineKeyboardMarkup:
     if idx < last:
         row.append(InlineKeyboardButton("Далее ➡️", callback_data=f"{CB_GUIDE_NEXT}:{idx+1}"))
     nav = [row] if row else []
-    return InlineKeyboardMarkup(nav + [[InlineKeyboardButton("Главное меню", callback_data=CB_GUIDE_MENU)]])  # [1]
+    return InlineKeyboardMarkup(nav + [[InlineKeyboardButton("Главное меню", callback_data=CB_GUIDE_MENU)]])
 
 # ===== Контент шагов =====
 GUIDE_TEXTS: List[str] = [
@@ -110,29 +117,29 @@ GUIDE_TEXTS: List[str] = [
     "— Универсальный личностный опросник\n"
     "— Опросник мотиваторов и демотиваторов\n\n"
     "Остальные инструменты — по желанию."
-]  # [1]
+]
 
+# ===== Медиаконтент: локальные файлы по шагам =====
 GUIDE_MEDIA: List[Union[None, str, List[str]]] = [
-    "https://drive.google.com/uc?export=view&id=1cAedHiYboYhhmPNTvtp2TODSQg2Diwd2",
-    "https://drive.google.com/uc?export=view&id=1o-yeU9jBBTVLnPlVsyqZMJsXAv1VYok9",
-    "https://drive.google.com/uc?export=view&id=1I8QlmCim0kDbNawG5lySU5YPrDnK2jmx",
-    "https://drive.google.com/uc?export=view&id=19iCWdqLz8J2cwfhOIJh71LDg6zFkm-rK",
-    [
-        "https://drive.google.com/uc?export=view&id=1mjIb2ePe_1VTgKjcch2Ljy5Y_kezyNEc",
-        "https://drive.google.com/uc?export=view&id=1s7GsHKpDo-DElr1zHiIvo3-kFN2Ng6CK",
-        "https://drive.google.com/uc?export=view&id=1WA2kyBKsOhEoTkpHcu-qHNuGgJepI5IG",
-        "https://drive.google.com/uc?export=view&id=1_khnYowuImgHr4NortOtvsZbnsXzY716",
+    "Снимок экрана 2025-08-26 в 17.26.15.png",  # Шаг 1
+    "Снимок экрана 2025-08-26 в 17.26.24.png",  # Шаг 2
+    "Снимок экрана 2025-08-26 в 17.26.34.png",  # Шаг 3
+    "Снимок экрана 2025-08-26 в 17.37.56.png",  # Шаг 4
+    [                                           # Шаг 5 — альбом
+        "Снимок экрана 2025-08-26 в 17.39.00.png",
+        "Снимок экрана 2025-08-26 в 17.40.06.png",
+        "Снимок экрана 2025-08-26 в 17.40.23.png",
     ],
-    "https://drive.google.com/uc?export=view&id=1mffyx-g4_-5AGzhug-p1CzqVudy_eELE",
-]  # [1]
-LAST_STEP = len(GUIDE_TEXTS) - 1  # [1]
+    "Снимок экрана 2025-08-26 в 17.41.20.png",  # Шаг 6
+]
+LAST_STEP = len(GUIDE_TEXTS) - 1
 
 # ===== Прогресс пользователя =====
 def get_saved_step(context: ContextTypes.DEFAULT_TYPE) -> int:
-    return int(context.user_data.get("guide_step", 0))  # [1]
+    return int(context.user_data.get("guide_step", 0))
 
 def set_saved_step(context: ContextTypes.DEFAULT_TYPE, idx: int) -> None:
-    context.user_data["guide_step"] = max(0, min(idx, LAST_STEP))  # [1]
+    context.user_data["guide_step"] = max(0, min(idx, LAST_STEP))
 
 # ===== Показ шага =====
 async def send_guide_step(msg_target, idx: int):
@@ -142,15 +149,23 @@ async def send_guide_step(msg_target, idx: int):
     media = GUIDE_MEDIA[idx]
 
     if isinstance(media, str):
-        await msg_target.reply_photo(photo=media)
+        with open(media_path(media), "rb") as f:
+            await msg_target.reply_photo(photo=f)
     elif isinstance(media, list) and media:
-        await msg_target.reply_media_group(media=[InputMediaPhoto(m) for m in media])
+        files = [open(media_path(m), "rb") for m in media]
+        try:
+            group = [InputMediaPhoto(f) for f in files]
+            await msg_target.reply_media_group(media=group)
+        finally:
+            for f in files:
+                f.close()
 
-    await msg_target.reply_text(text, reply_markup=kb)  # [1]
+    await msg_target.reply_text(text, reply_markup=kb)
 
 # ===== Главное меню =====
 async def show_main_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int, target_message_id: Optional[int] = None) -> None:
     text = "Главное меню. Выбирай действие:"
+
     if target_message_id is not None:
         try:
             await context.bot.edit_message_text(
@@ -163,20 +178,45 @@ async def show_main_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int, targe
             context.user_data["last_menu_id"] = None
 
     sent = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=kb_main())
-    context.user_data["last_menu_id"] = sent.message_id  # [1]
+    context.user_data["last_menu_id"] = sent.message_id
 
 # ===== Команды =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user = update.effective_user
     name = ((user.first_name or "").strip()) or "друг"
+
     await context.bot.send_chat_action(chat_id=chat.id, action=ChatAction.TYPING)
-    greeting = f"Привет, {name}! Это бот для тестирования.\n\nГотовлю главное меню…"
+
+    greeting = (
+        f"Привет, {name}! Это бот для тестирования.\n\n"
+        "Готовлю главное меню…"
+    )
     await context.bot.send_message(chat.id, greeting)
-    await show_main_menu(context, chat.id)  # [1]
+    await show_main_menu(context, chat.id)
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Команды:\n/start — главное меню\n/help — эта справка")  # [1]
+    await update.message.reply_text("Команды:\n/start — главное меню\n/help — эта справка")
+
+# Отдельно — капибара по URL (прямой JPEG)
+CAPYBARA_URL = "https://i.imgur.com/CzXTtJV.jpg"  # можно заменить на свой прямой URL [11]
+async def capybara_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_photo(photo=CAPYBARA_URL, caption="Капибара по URL 🦙")  # [11]
+
+# ===== Напоминание через 24 часа =====
+REMIND24_TEXT = "Напоминание: продолжить работу с тестированием ✨"
+
+async def remind_job(context: ContextTypes.DEFAULT_TYPE):
+    chat_id = context.job.chat_id
+    try:
+        await context.bot.send_message(chat_id=chat_id, text=REMIND24_TEXT)
+    except Exception as e:
+        log.warning("remind_job send failed: %s", e)
+
+async def remind24_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    when_seconds = 24 * 60 * 60
+    context.job_queue.run_once(remind_job, when=when_seconds, chat_id=update.effective_chat.id, name=f"remind24:{update.effective_chat.id}")
+    await update.message.reply_text("Ок, напомню через 24 часа.")  # [1][3]
 
 # ===== Обработчик кнопок =====
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -245,30 +285,33 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == CB_GUIDE_MENU:
         await show_main_menu(context, chat_id)
-        return  # [1]
+        return
 
-# ===== Установка системных команд (не падаем при ошибке) =====
+# ===== Post-init команд =====
 async def post_init(application: Application) -> None:
     try:
         await application.bot.set_my_commands(
             [
                 BotCommand("start", "Запуск бота"),
                 BotCommand("help", "Справка"),
+                BotCommand("capybara", "Капибара по URL"),
+                BotCommand("remind24", "Напомнить через 24 часа"),
             ]
         )
     except Exception as e:
-        log.warning("set_my_commands не применены: %s", e)  # [1]
+        log.warning("set_my_commands не применены: %s", e)
 
 # ===== PTB Application =====
 ptb = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 ptb.add_handler(CommandHandler("start", start))
 ptb.add_handler(CommandHandler("help", help_cmd))
-ptb.add_handler(CallbackQueryHandler(on_button))  # [3]
+ptb.add_handler(CommandHandler("capybara", capybara_cmd))     # [11]
+ptb.add_handler(CommandHandler("remind24", remind24_cmd))     # [1][3]
+ptb.add_handler(CallbackQueryHandler(on_button))
 
-# ===== FastAPI + webhook =====
+# ===== FastAPI + webhook lifespan =====
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Ставим вебхук при запуске приложения
     if PUBLIC_BASE_URL:
         url = f"{PUBLIC_BASE_URL}/telegram-webhook"
         await ptb.bot.setWebhook(url)
@@ -278,21 +321,25 @@ async def lifespan(_: FastAPI):
     async with ptb:
         await ptb.start()
         yield
-        await ptb.stop()  # [1]
+        await ptb.stop()
 
 app = FastAPI(lifespan=lifespan)
 
+# Раздача статики (для предпросмотра в браузере)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")  # [7]
+
+# ===== Вебхук =====
 @app.post("/telegram-webhook")
 async def telegram_webhook(request: Request):
     payload = await request.json()
     update = Update.de_json(payload, ptb.bot)
     await ptb.process_update(update)
-    return Response(status_code=HTTPStatus.OK)  # [2][3]
+    return Response(status_code=HTTPStatus.OK)
 
 # ===== Health endpoints =====
 @app.get("/health")
 async def health():
-    return {"status": "ok"}, status.HTTP_200_OK  # [4]
+    return {"status": "ok"}, status.HTTP_200_OK
 
 @app.get("/ready")
 async def ready():
@@ -305,5 +352,5 @@ async def ready():
         }, status.HTTP_200_OK
     except Exception as e:
         log.exception("Ready check failed: %s", e)
-        return {"status": "error", "detail": str(e)}, status.HTTP_503_SERVICE_UNAVAILABLE  # [5]
+        return {"status": "error", "detail": str(e)}, status.HTTP_503_SERVICE_UNAVAILABLE
 
