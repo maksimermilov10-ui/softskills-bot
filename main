@@ -23,52 +23,73 @@ from telegram.ext import (
 )
 from telegram.constants import ChatAction
 
-# ===== Логи =====
+# ---------- Логи ----------
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     level=logging.INFO,
 )
 log = logging.getLogger("softskills-bot")
 
-# ===== Конфигурация =====
+# ---------- Конфигурация ----------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise SystemExit('Не задан BOT_TOKEN. export BOT_TOKEN="<токен>"')  # критично [6]
+    raise SystemExit('Не задан BOT_TOKEN. export BOT_TOKEN="<токен>"')  # критично [11]
 
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
-if not PUBLIC_BASE_URL:
-    log.warning("PUBLIC_BASE_URL пуст — вебхук не сможет установиться автоматически.")  # [6]
 
 TEST_LINK = "https://softskills.rsv.ru/"
 
-# ===== Пути к статике (для проверки наличия в образе через /static) =====
+# ---------- Статика ----------
 BASE_DIR = Path(__file__).parent
 STATIC_DIR = BASE_DIR / "static"
 IMAGES_DIR = STATIC_DIR / "images"
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 def media_path(name: str) -> Path:
-    return IMAGES_DIR / name  # только для локальных файлов (URL не проверяем) [12]
+    return IMAGES_DIR / name  # /static смонтирован ниже для проверки в браузере [7]
 
-# ===== Кнопки/колбэки =====
+# ---------- Колбэки ----------
+CB_MAIN = "main_menu"
+CB_MENU_TEST = "menu_test"
+CB_MENU_ANN = "menu_ann"
+
 CB_TEST = "test"
 CB_GUIDE_OPEN = "guide_open"
 CB_GUIDE_FAST = "guide_fast"
 CB_GUIDE_NEXT = "guide_next"
 CB_GUIDE_PREV = "guide_prev"
-CB_GUIDE_MENU = "guide_menu"
+CB_GUIDE_MENU = "guide_menu"  # внутри гайда
 CB_EVENTS = "events"
 
-# ===== Разметка =====
-def kb_main() -> InlineKeyboardMarkup:
+CB_REMINDER = "reminder_toggle"  # переключатель напоминания
+
+# ---------- Клавиатуры ----------
+def kb_root() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("Пройти тестирование", callback_data=CB_TEST)],
+            [InlineKeyboardButton("Тестирование", callback_data=CB_MENU_TEST)],
+            [InlineKeyboardButton("Анонсы и напоминание", callback_data=CB_MENU_ANN)],
+        ]
+    )  # двухуровневое меню [4][2]
+
+def kb_test_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
             [InlineKeyboardButton("Инструкция (по шагам)", callback_data=CB_GUIDE_OPEN)],
             [InlineKeyboardButton("Уже зарегистрирован(а)", callback_data=CB_GUIDE_FAST)],
-            [InlineKeyboardButton("Ближайшие анонсы и мероприятия", callback_data=CB_EVENTS)],
+            [InlineKeyboardButton("Пройти тестирование", callback_data=CB_TEST)],
+            [InlineKeyboardButton("⬅️ Назад", callback_data=CB_MAIN)],
         ]
-    )
+    )  # подменю тестирования [4]
+
+def kb_ann_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("Ближайшие анонсы", callback_data=CB_EVENTS)],
+            [InlineKeyboardButton("Напоминание (вкл/выкл)", callback_data=CB_REMINDER)],
+            [InlineKeyboardButton("⬅️ Назад", callback_data=CB_MAIN)],
+        ]
+    )  # подменю анонсов/напоминаний [4]
 
 def kb_guide(idx: int, last: int) -> InlineKeyboardMarkup:
     row = []
@@ -76,10 +97,10 @@ def kb_guide(idx: int, last: int) -> InlineKeyboardMarkup:
         row.append(InlineKeyboardButton("⬅️ Назад", callback_data=f"{CB_GUIDE_PREV}:{idx-1}"))
     if idx < last:
         row.append(InlineKeyboardButton("Далее ➡️", callback_data=f"{CB_GUIDE_NEXT}:{idx+1}"))
-    nav = [row] if row else []
-    return InlineKeyboardMarkup(nav + [[InlineKeyboardButton("Главное меню", callback_data=CB_GUIDE_MENU)]])
+    # Кнопка "Главное меню" ведёт к корню из 2 кнопок
+    return InlineKeyboardMarkup([row] if row else [] + [[InlineKeyboardButton("Главное меню", callback_data=CB_MAIN)]])
 
-# ===== Тексты шагов =====
+# ---------- Текст шагов ----------
 GUIDE_TEXTS: List[str] = [
     "1) Регистрация на платформе\n\nСоздай личный кабинет, нажми «Зарегистрироваться», введи код из письма.",
     "2) Заполнение анкеты\n\nЗаполни обязательные поля и укажи Центр компетенций.",
@@ -88,75 +109,93 @@ GUIDE_TEXTS: List[str] = [
     "5) Нажать «Начать» и заполнить анкету\n\nЗаполни ФИО и данные об образовании.",
     "6) Финишная прямая! 🏁\n\nПройди 4 базовых инструмента (синие маркеры).",
 ]
-
-# ===== Медиаконтент: Google Drive direct URLs =====
-GUIDE_MEDIA: List[Union[None, str, List[str]]] = [
-    "https://drive.google.com/uc?export=view&id=1cAedHiYboYhhmPNTvtp2TODSQg2Diwd2",  # Шаг 1
-    "https://drive.google.com/uc?export=view&id=1o-yeU9jBBTVLnPlVsyqZMJsXAv1VYok9",  # Шаг 2
-    "https://drive.google.com/uc?export=view&id=1I8QlmCim0kDbNawG5lySU5YPrDnK2jmx",  # Шаг 3
-    "https://drive.google.com/uc?export=view&id=19iCWdqLz8J2cwfhOIJh71LDg6zFkm-rK",  # Шаг 4 (одиночное фото)
-    [  # Шаг 5 — альбом из 4 изображений
-        "https://drive.google.com/uc?export=view&id=1mjIb2ePe_1VTgKjcch2Ljy5Y_kezyNEc",
-        "https://drive.google.com/uc?export=view&id=1s7GsHKpDo-DElr1zHiIvo3-kFN2Ng6CK",
-        "https://drive.google.com/uc?export=view&id=1WA2kyBKsOhEoTkpHcu-qHNuGgJepI5IG",
-        "https://drive.google.com/uc?export=view&id=1_khnYowuImgHr4NortOtvsZbnsXzY716",
-    ],
-    "https://drive.google.com/uc?export=view&id=1mffyx-g4_-5AGzhug-p1CzqVudy_eELE",  # Шаг 6
-]
 LAST_STEP = len(GUIDE_TEXTS) - 1
 
-# ===== Прогресс пользователя =====
+# ---------- Локальные изображения ----------
+GUIDE_MEDIA: List[Union[None, str, List[str]]] = [
+    "Снимок экрана 2025-08-26 в 17.26.15.png",
+    "Снимок экрана 2025-08-26 в 17.26.24.png",
+    "Снимок экрана 2025-08-26 в 17.26.34.png",
+    [
+        "Снимок экрана 2025-08-26 в 17.39.00.png",
+        "Снимок экрана 2025-08-26 в 17.37.56.png",
+    ],
+    [
+        "Снимок экрана 2025-08-26 в 17.40.06.png",
+        "Снимок экрана 2025-08-26 в 17.40.23.png",
+        "Снимок экрана 2025-08-26 в 17.40.40.png",
+    ],
+    "Снимок экрана 2025-08-26 в 17.41.20.png",
+]
+
+# ---------- Напоминания ----------
+REMIND_TEXT = "Напоминание: продолжить тестирование ✨"
+REMIND_JOB_PREFIX = "remind-everyday"
+
+async def remind_everyday_job(context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(chat_id=context.job.chat_id, text=REMIND_TEXT)
+
+def reminder_job_name(chat_id: int) -> str:
+    return f"{REMIND_JOB_PREFIX}:{chat_id}"
+
+def reminder_is_on(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> bool:
+    return bool(context.job_queue.get_jobs_by_name(reminder_job_name(chat_id)))  # [11][6]
+
+def reminder_enable(context: ContextTypes.DEFAULT_TYPE, chat_id: int, interval_hours: int = 24) -> None:
+    name = reminder_job_name(chat_id)
+    if context.job_queue.get_jobs_by_name(name):
+        return
+    context.job_queue.run_repeating(
+        remind_everyday_job,
+        interval=interval_hours * 60 * 60,
+        first=0,
+        chat_id=chat_id,
+        name=name,
+    )  # именованный повторяющийся джоб легко отключать[11][12]
+
+def reminder_disable(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+    name = reminder_job_name(chat_id)
+    for job in context.job_queue.get_jobs_by_name(name):
+        job.schedule_removal()  # штатное выключение[11][6]
+
+# ---------- Прогресс пользователя ----------
 def get_saved_step(context: ContextTypes.DEFAULT_TYPE) -> int:
     return int(context.user_data.get("guide_step", 0))
 
 def set_saved_step(context: ContextTypes.DEFAULT_TYPE, idx: int) -> None:
     context.user_data["guide_step"] = max(0, min(idx, LAST_STEP))
 
-# ===== Показ шага (URL и локальные файлы поддерживаются) =====
+# ---------- Отправка шага ----------
 async def send_guide_step(msg_target, idx: int):
     header = f"Шаг {idx+1}/{LAST_STEP+1}"
     text = f"{header}\n\n{GUIDE_TEXTS[idx]}"
     kb = kb_guide(idx, LAST_STEP)
     media = GUIDE_MEDIA[idx]
 
-    # Строка может быть как локальным именем, так и URL; проверяем по префиксу
-    def is_url(s: str) -> bool:
-        return s.startswith("http://") or s.startswith("https://")
-
     if isinstance(media, str):
-        if is_url(media):
-            try:
-                await msg_target.reply_photo(photo=media)  # URL — Telegram скачает сам [2][1]
-            except Exception as e:
-                log.exception("send_guide_step URL photo failed: %s | url=%s", e, media)
-        else:
-            path = media_path(media)
-            if not path.exists():
-                log.error("Media file missing: %s", path)
-            try:
-                with open(path, "rb") as f:
-                    await msg_target.reply_photo(photo=f)
-            except Exception as e:
-                log.exception("send_guide_step file photo failed: %s | path=%s", e, path)
+        path = media_path(media)
+        if not path.exists():
+            log.error("Media file missing: %s", path)
+        try:
+            with open(path, "rb") as f:
+                await msg_target.reply_photo(photo=f)  # file-like корректен для PTB [2]
+        except Exception as e:
+            log.exception("send_guide_step file photo failed: %s | path=%s", e, path)
 
     elif isinstance(media, list) and media:
-        # Медиагруппа: может содержать URL и/или локальные имена
         files = []
         group = []
         try:
-            for item in media:
-                if is_url(item):
-                    group.append(InputMediaPhoto(item))  # URL напрямую [1]
-                else:
-                    p = media_path(item)
-                    if not p.exists():
-                        log.error("Media file missing in group: %s", p)
-                    f = open(p, "rb")
-                    files.append(f)  # для закрытия позже
-                    group.append(InputMediaPhoto(f))
+            for name in media:
+                p = media_path(name)
+                if not p.exists():
+                    log.error("Media file missing in group: %s", p)
+                f = open(p, "rb")
+                files.append(f)
+                group.append(InputMediaPhoto(f))  # медиагруппа из локальных файлов [2]
             await msg_target.reply_media_group(media=group)
         except Exception as e:
-            log.exception("send_guide_step media_group failed: %s | items=%s", e, media)
+            log.exception("send_guide_step media_group failed: %s | names=%s", e, media)
         finally:
             for f in files:
                 try:
@@ -166,55 +205,46 @@ async def send_guide_step(msg_target, idx: int):
 
     await msg_target.reply_text(text, reply_markup=kb)
 
-# ===== Главное меню =====
-async def show_main_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int, target_message_id: Optional[int] = None) -> None:
-    text = "Главное меню. Выбирай действие:"
-
+# ---------- Меню и команды ----------
+async def show_root_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int, target_message_id: Optional[int] = None) -> None:
+    text = "Главное меню"
+    mark = kb_root()
     if target_message_id is not None:
         try:
-            await context.bot.edit_message_text(
-                chat_id=chat_id, message_id=target_message_id, text=text, reply_markup=kb_main()
-            )
+            await context.bot.edit_message_text(chat_id=chat_id, message_id=target_message_id, text=text, reply_markup=mark)
             context.user_data["last_menu_id"] = target_message_id
             return
-        except Exception as e:
-            log.info("Редактирование меню не удалось: %s — отправляем новое", e)
+        except Exception:
             context.user_data["last_menu_id"] = None
+    sent = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=mark)
+    context.user_data["last_menu_id"] = sent.message_id  # редактируем одно сообщение, не засоряя чат [4]
 
-    sent = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=kb_main())
-    context.user_data["last_menu_id"] = sent.message_id
-
-# ===== Команды =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user = update.effective_user
     name = ((user.first_name or "").strip()) or "друг"
-
     await context.bot.send_chat_action(chat_id=chat.id, action=ChatAction.TYPING)
-    await context.bot.send_message(chat.id, f"Привет, {name}! Это бот для тестирования.\n\nГотовлю главное меню…")
-    await show_main_menu(context, chat.id)
+    await context.bot.send_message(chat.id, f"Привет, {name}! Это бот для тестирования.\n\nВыбирай раздел ниже.")
+    await show_root_menu(context, chat.id)
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Команды:\n/start — главное меню\n/help — справка\n/capybara — фото по URL\n/remind24 — напомнить через 24 часа")
+    await update.message.reply_text(
+        "Команды:\n"
+        "/start — главное меню\n"
+        "/help — справка\n"
+        "/reminder_on — включить напоминание\n"
+        "/reminder_off — выключить напоминание"
+    )
 
-CAPYBARA_URL = "https://i.imgur.com/CzXTtJV.jpg"
-async def capybara_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_photo(photo=CAPYBARA_URL, caption="Капибара по URL")
+async def reminder_on_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    reminder_enable(context, update.effective_chat.id, interval_hours=24)
+    await update.message.reply_text("🔔 Напоминание включено. Сообщение раз в 24 часа.")
 
-# ===== Напоминание через 24 часа (JobQueue) =====
-REMIND24_TEXT = "Напоминание: продолжить работу с тестированием ✨"
+async def reminder_off_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    reminder_disable(context, update.effective_chat.id)
+    await update.message.reply_text("🔕 Напоминание выключено.")
 
-async def remind_job(context: ContextTypes.DEFAULT_TYPE):
-    try:
-        await context.bot.send_message(chat_id=context.job.chat_id, text=REMIND24_TEXT)
-    except Exception as e:
-        log.warning("remind_job send failed: %s", e)
-
-async def remind24_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.job_queue.run_once(remind_job, when=24*60*60, chat_id=update.effective_chat.id, name=f"remind24:{update.effective_chat.id}")  # [10]
-    await update.message.reply_text("Ок, напомню через 24 часа.")
-
-# ===== Обработчик кнопок =====
+# ---------- Обработчик кнопок ----------
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -222,16 +252,38 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_msg = q.message
     chat_id = chat_msg.chat.id
 
+    # Переключение двухуровневого меню
+    if data == CB_MAIN:
+        await show_root_menu(context, chat_id, target_message_id=chat_msg.message_id)
+        return
+
+    if data == CB_MENU_TEST:
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=chat_msg.message_id,
+            text="Меню: Тестирование",
+            reply_markup=kb_test_menu(),
+        )  # редактируем сообщение для чистой навигации [4]
+        return
+
+    if data == CB_MENU_ANN:
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=chat_msg.message_id,
+            text="Меню: Анонсы и напоминание",
+            reply_markup=kb_ann_menu(),
+        )  # подменю анонсов/напоминаний [4]
+        return
+
+    # Функции раздела "Тестирование"
     if data == CB_TEST:
         msg = (
             "Тестирование проходит на компьютере.\n\n"
             f"1) Перейти на сайт: {TEST_LINK}\n"
             "2) Зарегистрироваться (или войти), указать e‑mail.\n"
-            "3) Открыть раздел «Оценка компетенций» и нажать «Пройти тестирование».\n\n"
-            "Нужна пошаговая инструкция? Нажми «Инструкция (по шагам)»."
+            "3) Открыть раздел «Оценка компетенций» и нажать «Пройти тестирование»."
         )
-        sent = await chat_msg.reply_text(msg, reply_markup=kb_main())
-        context.user_data["last_menu_id"] = sent.message_id
+        await chat_msg.reply_text(msg, reply_markup=kb_test_menu())
         return
 
     if data == CB_GUIDE_OPEN:
@@ -255,25 +307,30 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_guide_step(chat_msg, idx)
         return
 
+    # Раздел "Анонсы и напоминание"
     if data == CB_EVENTS:
         placeholder = "Пока здесь пусто — как только появятся ближайшие мероприятия, бот первым сообщит ✨"
-        sent = await chat_msg.reply_text(placeholder, reply_markup=kb_main())
-        context.user_data["last_menu_id"] = sent.message_id
+        await chat_msg.reply_text(placeholder, reply_markup=kb_ann_menu())
         return
 
-    if data == CB_GUIDE_MENU:
-        await show_main_menu(context, chat_id)
+    if data == CB_REMINDER:
+        if reminder_is_on(context, chat_id):
+            reminder_disable(context, chat_id)
+            await chat_msg.reply_text("🔕 Напоминание выключено. Можно включить снова в меню раздела.")
+        else:
+            reminder_enable(context, chat_id, interval_hours=24)
+            await chat_msg.reply_text("🔔 Напоминание включено. Бот будет писать раз в 24 часа.")
         return
 
-# ===== Регистрация команд и PTB =====
+# ---------- Регистрация PTB ----------
 async def post_init(application: Application) -> None:
     try:
         await application.bot.set_my_commands(
             [
                 BotCommand("start", "Запуск бота"),
                 BotCommand("help", "Справка"),
-                BotCommand("capybara", "Капибара по URL"),
-                BotCommand("remind24", "Напомнить через 24 часа"),
+                BotCommand("reminder_on", "Включить напоминание"),
+                BotCommand("reminder_off", "Выключить напоминание"),
             ]
         )
     except Exception as e:
@@ -282,17 +339,17 @@ async def post_init(application: Application) -> None:
 ptb = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 ptb.add_handler(CommandHandler("start", start))
 ptb.add_handler(CommandHandler("help", help_cmd))
-ptb.add_handler(CommandHandler("capybara", capybara_cmd))
-ptb.add_handler(CommandHandler("remind24", remind24_cmd))
+ptb.add_handler(CommandHandler("reminder_on", reminder_on_cmd))
+ptb.add_handler(CommandHandler("reminder_off", reminder_off_cmd))
 ptb.add_handler(CallbackQueryHandler(on_button))
 
-# ===== FastAPI + webhook lifespan =====
+# ---------- FastAPI + webhook ----------
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     if PUBLIC_BASE_URL:
         url = f"{PUBLIC_BASE_URL}/telegram-webhook"
         await ptb.bot.setWebhook(url)
-        log.info("Webhook set to %s", url)  # [6]
+        log.info("Webhook set to %s", url)
     else:
         log.error("PUBLIC_BASE_URL пуст — вебхук не установлен.")
     async with ptb:
@@ -302,10 +359,10 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# Раздача статики для проверки наличия локальных файлов (если будут)
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")  # [12]
+# Раздача статики
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")  # [7]
 
-# ===== Вебхук =====
+# Вебхук
 @app.post("/telegram-webhook")
 async def telegram_webhook(request: Request):
     payload = await request.json()
@@ -313,7 +370,7 @@ async def telegram_webhook(request: Request):
     await ptb.process_update(update)
     return Response(status_code=HTTPStatus.OK)
 
-# ===== Health =====
+# Health/Ready
 @app.get("/health")
 async def health():
     return {"status": "ok"}, status.HTTP_200_OK
