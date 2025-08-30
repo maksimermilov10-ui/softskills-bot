@@ -33,11 +33,11 @@ log = logging.getLogger("softskills-bot")
 # ===== Конфигурация =====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise SystemExit('Не задан BOT_TOKEN. Выполнить: export BOT_TOKEN="<токен>"')  # [6]
+    raise SystemExit('Не задан BOT_TOKEN. export BOT_TOKEN="<токен>"')  # критично [1]
 
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 if not PUBLIC_BASE_URL:
-    log.warning("PUBLIC_BASE_URL пуст — вебхук не сможет установиться автоматически.")  # [6]
+    log.warning("PUBLIC_BASE_URL пуст — вебхук не сможет установиться автоматически.")  # [1]
 
 TEST_LINK = "https://softskills.rsv.ru/"
 
@@ -141,7 +141,7 @@ def get_saved_step(context: ContextTypes.DEFAULT_TYPE) -> int:
 def set_saved_step(context: ContextTypes.DEFAULT_TYPE, idx: int) -> None:
     context.user_data["guide_step"] = max(0, min(idx, LAST_STEP))
 
-# ===== Показ шага =====
+# ===== Показ шага с расширенным логированием =====
 async def send_guide_step(msg_target, idx: int):
     header = f"Шаг {idx+1}/{LAST_STEP+1}"
     text = f"{header}\n\n{GUIDE_TEXTS[idx]}"
@@ -149,16 +149,34 @@ async def send_guide_step(msg_target, idx: int):
     media = GUIDE_MEDIA[idx]
 
     if isinstance(media, str):
-        with open(media_path(media), "rb") as f:
-            await msg_target.reply_photo(photo=f)
-    elif isinstance(media, list) and media:
-        files = [open(media_path(m), "rb") for m in media]
+        path = media_path(media)
+        if not path.exists():
+            log.error("Media file missing: %s", path)  # быстрая диагностика [15]
         try:
+            with open(path, "rb") as f:
+                await msg_target.reply_photo(photo=f)  # file-like корректен для PTB [1]
+        except Exception as e:
+            log.exception("send_guide_step photo failed: %s | path=%s", e, path)  # полный стек [14][15]
+
+    elif isinstance(media, list) and media:
+        paths = [media_path(m) for m in media]
+        for p in paths:
+            if not p.exists():
+                log.error("Media file missing in group: %s", p)
+        files = []
+        try:
+            for p in paths:
+                files.append(open(p, "rb"))
             group = [InputMediaPhoto(f) for f in files]
             await msg_target.reply_media_group(media=group)
+        except Exception as e:
+            log.exception("send_guide_step media_group failed: %s | paths=%s", e, paths)  # стек [14]
         finally:
             for f in files:
-                f.close()
+                try:
+                    f.close()
+                except Exception:
+                    pass
 
     await msg_target.reply_text(text, reply_markup=kb)
 
@@ -198,12 +216,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Команды:\n/start — главное меню\n/help — эта справка")
 
-# Отдельно — капибара по URL (прямой JPEG)
-CAPYBARA_URL = "https://i.imgur.com/CzXTtJV.jpg"  # можно заменить на свой прямой URL [11]
+# Капибара по URL
+CAPYBARA_URL = "https://i.imgur.com/CzXTtJV.jpg"  # прямой JPEG [1]
 async def capybara_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_photo(photo=CAPYBARA_URL, caption="Капибара по URL 🦙")  # [11]
+    await update.message.reply_photo(photo=CAPYBARA_URL, caption="Капибара по URL 🦙")
 
-# ===== Напоминание через 24 часа =====
+# Напоминание через 24 часа
 REMIND24_TEXT = "Напоминание: продолжить работу с тестированием ✨"
 
 async def remind_job(context: ContextTypes.DEFAULT_TYPE):
@@ -215,8 +233,13 @@ async def remind_job(context: ContextTypes.DEFAULT_TYPE):
 
 async def remind24_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     when_seconds = 24 * 60 * 60
-    context.job_queue.run_once(remind_job, when=when_seconds, chat_id=update.effective_chat.id, name=f"remind24:{update.effective_chat.id}")
-    await update.message.reply_text("Ок, напомню через 24 часа.")  # [1][3]
+    context.job_queue.run_once(
+        remind_job,
+        when=when_seconds,
+        chat_id=update.effective_chat.id,
+        name=f"remind24:{update.effective_chat.id}",
+    )  # [6]
+    await update.message.reply_text("Ок, напомню через 24 часа.")
 
 # ===== Обработчик кнопок =====
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -305,8 +328,8 @@ async def post_init(application: Application) -> None:
 ptb = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 ptb.add_handler(CommandHandler("start", start))
 ptb.add_handler(CommandHandler("help", help_cmd))
-ptb.add_handler(CommandHandler("capybara", capybara_cmd))     # [11]
-ptb.add_handler(CommandHandler("remind24", remind24_cmd))     # [1][3]
+ptb.add_handler(CommandHandler("capybara", capybara_cmd))
+ptb.add_handler(CommandHandler("remind24", remind24_cmd))
 ptb.add_handler(CallbackQueryHandler(on_button))
 
 # ===== FastAPI + webhook lifespan =====
@@ -315,7 +338,7 @@ async def lifespan(_: FastAPI):
     if PUBLIC_BASE_URL:
         url = f"{PUBLIC_BASE_URL}/telegram-webhook"
         await ptb.bot.setWebhook(url)
-        log.info("Webhook set to %s", url)
+        log.info("Webhook set to %s", url)  # [1]
     else:
         log.error("PUBLIC_BASE_URL пуст — вебхук не установлен.")
     async with ptb:
@@ -325,7 +348,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# Раздача статики (для предпросмотра в браузере)
+# Раздача статики (для проверки наличия файлов в образе)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")  # [7]
 
 # ===== Вебхук =====
