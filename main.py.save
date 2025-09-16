@@ -5,11 +5,9 @@ import http.server
 import socketserver
 from datetime import datetime, timedelta
 from typing import List, Union, Optional
-
 from fastapi import FastAPI, Request, Response
 from http import HTTPStatus
 from contextlib import asynccontextmanager
-
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -25,14 +23,6 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    MessageHandler,
-    filters,
-)
 from telegram.constants import ChatAction
 
 # ===== Логи =====
@@ -47,7 +37,6 @@ if not BOT_TOKEN:
     raise SystemExit('Не задан BOT_TOKEN. Выполнить: export BOT_TOKEN="<токен>"')
 
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
-
 TEST_LINK = "https://softskills.rsv.ru/"
 
 # callback-ключи
@@ -64,62 +53,43 @@ EVENTS: List[dict] = [
     # Пример:
     # {"title": "Бизнес‑день в Губкинском", "date": "09.11, 14:00", "link": "https://t.me/gubkinsoft"},
 ]
-# Фото капибары
+
+# Фото капибары для анонсов
 CAPYBARA_PHOTO_URL = (
     "https://drive.google.com/uc?export=view&id=1iMD-ztr-hyo3GRn-z-XpJGevGeg0Pswh"
 )
 
-# ===== Разметка =====
-def kb_main() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-≠)
-from telegram.constants import ChatAction
-
-# ===== Логи =====
-logging.basicConfig(
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s", level=logging.INFO
-)
-log = logging.getLogger("softskills-bot")
-
-# ===== Конфигурация =====
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise SystemExit('Не задан BOT_TOKEN. Выполнить: export BOT_TOKEN="<токен>"')
-
-PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
-
-TEST_LINK = "https://softskills.rsv.ru/"
-
-# callback-ключи
-CB_TEST = "test"
-CB_GUIDE_OPEN = "guide_open"
-CB_GUIDE_FAST = "guide_fast"
-CB_GUIDE_NEXT = "guide_next"
-CB_GUIDE_PREV = "guide_prev"
-CB_GUIDE_MENU = "guide_menu"
-CB_EVENTS = "events"
-
-# ===== Данные по анонсам =====
-EVENTS: List[dict] = [
-    # Пример:
-    # {"title": "Бизнес‑день в Губкинском", "date": "09.11, 14:00", "link": "https://t.me/gubkinsoft"},
-]
-# Фото капибары
-CAPYBARA_PHOTO_URL = (
-    "https://drive.google.com/uc?export=view&id=1iMD-ztr-hyo3GRn-z-XpJGevGeg0Pswh"
-)
+# ===== Картинки для шагов =====
+STEP_IMAGES = {
+    0: [  # Шаг 1 - Регистрация на платформе
+        "https://drive.google.com/uc?export=view&id=19iCWdqLz8J2cwfhOIJh71LDg6zFkm-rK",
+        "https://drive.google.com/uc?export=view&id=1mjIb2ePe_1VTgKjcch2Ljy5Y_kezyNEc"
+    ],
+    1: [  # Шаг 2 - Заполнение анкеты
+        "https://drive.google.com/uc?export=view&id=1_khnYowuImgHr4NortOtvsZbnsXzY716"
+    ],
+    2: [  # Шаг 3 - Прохождение тестирования
+        "https://drive.google.com/uc?export=view&id=1I8QlmCim0kDbNawG5lySU5YPrDnK2jmx",
+        "https://drive.google.com/uc?export=view&id=1o-yeU9jBBTVLnPlVsyqZMJsXAv1VYok9"
+    ],
+    3: [],  # Шаг 4 - Перейти на сайт (без картинок)
+    4: [  # Шаг 5 - Нажать «Начать» и заполнить анкету
+        "https://drive.google.com/uc?export=view&id=1s7GsHKpDo-DElr1zHiIvo3-kFN2Ng6CK",
+        "https://drive.google.com/uc?export=view&id=1WA2kyBKsOhEoTkpHcu-qHNuGgJepI5IG"
+    ],
+    5: [  # Шаг 6 - Финишная прямая
+        "https://drive.google.com/uc?export=view&id=1mffyx-g4_-5AGzhug-p1CzqVudy_eELE"
+    ]
+}
 
 # ===== Разметка =====
 def kb_main() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton("Пройти тестирование", callback_data=CB_TEST)],
-            [InlineKeyboardButton("Инструкция (по шагам)", callback_data=CB_GUIDE_OPEN)],
-            [InlineKeyboardButton("Уже зарегистрирован(а)", callback_data=CB_GUIDE_FAST)],
-            [InlineKeyboardButton("Ближайшие анонсы и мероприятия", callback_data=CB_EVENTS)],
-        ]
-    )
-
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Пройти тестирование", callback_data=CB_TEST)],
+        [InlineKeyboardButton("Инструкция (по шагам)", callback_data=CB_GUIDE_OPEN)],
+        [InlineKeyboardButton("Уже зарегистрирован(а)", callback_data=CB_GUIDE_FAST)],
+        [InlineKeyboardButton("Ближайшие анонсы и мероприятия", callback_data=CB_EVENTS)],
+    ])
 
 def kb_guide(idx: int, last: int) -> InlineKeyboardMarkup:
     row = []
@@ -130,15 +100,16 @@ def kb_guide(idx: int, last: int) -> InlineKeyboardMarkup:
     nav = [row] if row else []
     return InlineKeyboardMarkup(nav + [[InlineKeyboardButton("Главное меню", callback_data=CB_GUIDE_MENU)]])
 
-
 # ===== Контент шагов =====
 GUIDE_TEXTS: List[str] = [
     "1) Регистрация на платформе\n\n"
     "Создай личный кабинет на платформе «Россия – страна возможностей». "
     "Нажми «Зарегистрироваться» и заполни форму. На почту придёт код — введи его в поле «Код подтверждения».",
+
     "2) Заполнение анкеты\n\n"
     "Внимательно заполни все обязательные поля. В блоке «Образование» и в разделе «Прочее» "
     "обязательно укажи свой Центр компетенций.",
+
     "3) Прохождение тестирования\n\n"
     "• Этапы: регистрация, базовая диагностика, дополнительная.\n"
     "• База: 5 базовых тестов + анкета. Дополнительно: 4 теста (добавляют компетенции в сводный отчёт).\n"
@@ -146,13 +117,17 @@ GUIDE_TEXTS: List[str] = [
     "• Используй ноутбук/ПК и стабильный интернет.\n"
     "• Перед каждым тестом есть инструкция; часть тестов с лимитом времени.\n"
     "• Отчёты появятся в личном кабинете в течение 48 часов; затем можно выгрузить на hh.ru.",
+
     f"4) Перейти на сайт\n\nЗайди с компьютера: {TEST_LINK}\n"
     "Вводи данные и ОБЯЗАТЕЛЬНО указывай e‑mail (не телефон).",
+
     "5) Нажать «Начать» и заполнить анкету\n\n"
     "Заполни ФИО и остальные данные. В «Образовании» укажи:\n"
     "— Учебное заведение: ФГАОУ ВО «РОССИЙСКИЙ ГОСУДАРСТВЕННЫЙ УНИВЕРСИТЕТ НЕФТИ И ГАЗА "
     "(НАЦИОНАЛЬНЫЙ ИССЛЕДОВАТЕЛЬСКИЙ УНИВЕРСИТЕТ) ИМЕНИ И.М. ГУБКИНА» (Губкинский университет)\n"
     "— Центр компетенций: ЦЕНТР КОМПЕТЕНЦИЙ РГУ НЕФТИ И ГАЗА (НИУ) ИМЕНИ И.М. ГУБКИНА (РГУНГ)",
+
+    "6) Финишная прямая! 🏁\n\n"
     "Пройди 5 базовых инструмента (синие маркеры):\n"
     "— Резильентность для студентов\n"
     "— Тест «Комплексный тест на анализ информации»\n"
@@ -162,37 +137,37 @@ GUIDE_TEXTS: List[str] = [
     "Остальные инструменты — откроются после прохождения основных.",
 ]
 
-
 LAST_STEP = len(GUIDE_TEXTS) - 1
-
 
 # ===== Прогресс пользователя =====
 def get_saved_step(context: ContextTypes.DEFAULT_TYPE) -> int:
     return int(context.user_data.get("guide_step", 0))
 
-
 def set_saved_step(context: ContextTypes.DEFAULT_TYPE, idx: int) -> None:
     context.user_data["guide_step"] = max(0, min(idx, LAST_STEP))
-
 
 # ===== Показ шага =====
 async def send_guide_step(msg_target, idx: int):
     header = f"Шаг {idx+1}/{LAST_STEP+1}"
     text = f"{header}\n\n{GUIDE_TEXTS[idx]}"
     kb = kb_guide(idx, LAST_STEP)
-    media = None
-    if idx < len(GUIDE_TEXTS) and isinstance(GUIDE_TEXTS[idx], list):
-        media = GUIDE_TEXTS[idx]  # на случай если в твоем коде медиа списком
-    else:
-        media = None
 
-    if isinstance(media, str):
-        await msg_target.reply_photo(photo=media)
-    elif isinstance(media, list) and media:
-        await msg_target.reply_media_group(media=[InputMediaPhoto(m) for m in media])
+    # Показываем картинки для шага, если они есть
+    step_images = STEP_IMAGES.get(idx, [])
+    if step_images:
+        try:
+            if len(step_images) == 1:
+                # Одна картинка
+                await msg_target.reply_photo(photo=step_images[0])
+            else:
+                # Несколько картинок
+                media_group = [InputMediaPhoto(img) for img in step_images]
+                await msg_target.reply_media_group(media=media_group)
+        except Exception as e:
+            log.warning(f"Не удалось отправить картинки для шага {idx+1}: {e}")
 
+    # Отправляем текст с кнопками
     await msg_target.reply_text(text, reply_markup=kb)
-
 
 # ===== Главное меню =====
 async def show_main_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int, target_message_id: Optional[int] = None) -> None:
@@ -212,7 +187,6 @@ async def show_main_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int, targe
     sent = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=kb_main())
     context.user_data["last_menu_id"] = sent.message_id
 
-
 # ===== /start =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -220,16 +194,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = ((user.first_name or "").strip()) or "друг"
 
     await context.bot.send_chat_action(chat_id=chat.id, action=ChatAction.TYPING)
-
     greeting = f"Привет, {name}! Это бот для тестирования.\n\nГотовлю главное меню…"
     await context.bot.send_message(chat.id, greeting)
     await show_main_menu(context, chat.id)
 
-
 # ===== /help =====
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Команды:\n/start — главное меню\n/help — эта справка")
-
 
 # ===== Обработчик кнопок =====
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -257,7 +228,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == CB_GUIDE_FAST:
-        idx = 3
+        idx = 3  # Начинаем с 4-го шага
         set_saved_step(context, idx)
         await send_guide_step(chat_msg, idx)
         return
@@ -268,11 +239,13 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             idx = int(idx_str)
         except Exception:
             idx = get_saved_step(context)
+
         set_saved_step(context, idx)
         await send_guide_step(chat_msg, idx)
         return
 
     if data == CB_EVENTS:
+        # Показываем фото капибары
         try:
             await chat_msg.reply_photo(photo=CAPYBARA_PHOTO_URL)
         except Exception as e:
@@ -298,6 +271,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 buttons.append(
                     [InlineKeyboardButton(f"Открыть: {title}", url=link)]
                 )
+
         kb = InlineKeyboardMarkup(
             buttons + [[InlineKeyboardButton("Главное меню", callback_data=CB_GUIDE_MENU)]]
         )
@@ -309,9 +283,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_main_menu(context, chat_id)
         return
 
-
 # ===== Основное инициализирующее приложение FastAPI и PTB =====
-
 ptb = (
     Application.builder()
     .token(BOT_TOKEN)
@@ -324,21 +296,16 @@ ptb.add_handler(CommandHandler("start", start))
 ptb.add_handler(CommandHandler("help", help_cmd))
 ptb.add_handler(CallbackQueryHandler(on_button))
 
-
 async def post_init(application):
     try:
-        await application.bot.set_my_commands(
-            [
-                BotCommand("start", "Запуск бота"),
-                BotCommand("help", "Справка"),
-            ]
-        )
+        await application.bot.set_my_commands([
+            BotCommand("start", "Запуск бота"),
+            BotCommand("help", "Справка"),
+        ])
     except Exception as e:
         log.warning(f"set_my_commands не применены: {e}")
 
-
 ptb.post_init = post_init
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -354,9 +321,7 @@ async def lifespan(app: FastAPI):
         yield
         await ptb.stop()
 
-
 app = FastAPI(lifespan=lifespan)
-
 
 @app.post("/telegram-webhook")
 async def telegram_webhook(request: Request):
@@ -364,4 +329,3 @@ async def telegram_webhook(request: Request):
     update = Update.de_json(data, ptb.bot)
     await ptb.process_update(update)
     return Response(status_code=HTTPStatus.OK)
-
