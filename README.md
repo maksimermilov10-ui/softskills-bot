@@ -1,4 +1,4 @@
-[README.md](https://github.com/user-attachments/files/31879005/README.md)
+
 # softskills-bot
 
 Telegram-бот, который помогает студентам пройти тестирование soft skills на платформе «Россия — страна возможностей» ([softskills.rsv.ru](https://softskills.rsv.ru/)): пошаговая инструкция по регистрации и прохождению тестов, быстрый вход для тех, кто уже зарегистрирован, и раздел с анонсами мероприятий.
