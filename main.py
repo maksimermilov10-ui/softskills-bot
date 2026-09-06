@@ -1,13 +1,10 @@
 import os
 import logging
-import threading
-import http.server
-import socketserver
-from datetime import datetime, timedelta
-from typing import List, Union, Optional
-from fastapi import FastAPI, Request, Response
+from typing import List, Optional
 from http import HTTPStatus
 from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request, Response
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -20,8 +17,6 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
-    MessageHandler,
-    filters,
 )
 from telegram.constants import ChatAction
 
@@ -51,35 +46,41 @@ CB_EVENTS = "events"
 # ===== Данные по анонсам =====
 EVENTS: List[dict] = [
     # Пример:
-    # {"title": "Бизнес‑день в Губкинском", "date": "09.11, 14:00", "link": "https://t.me/gubkinsoft"},
+    # {"title": "Бизнес-день в Губкинском", "date": "09.11, 14:00", "link": "https://t.me/gubkinsoft"},
 ]
 
-# Фото капибары для анонсов
+# Фото капибары для анонсов.
+# ВАЖНО: прямые ссылки на Google Drive (uc?export=view) периодически
+# отдают HTML вместо картинки или блокируются при частых обращениях —
+# известная причина "не отправилась картинка" в проде. Если это будет
+# происходить регулярно, надёжнее один раз отправить фото через
+# reply_photo(), взять из ответа file_id и захардкодить его здесь —
+# Telegram хранит файл на своей стороне, и такая ссылка не отваливается.
 CAPYBARA_PHOTO_URL = (
     "https://drive.google.com/uc?export=view&id=1iMD-ztr-hyo3GRn-z-XpJGevGeg0Pswh"
 )
 
-# ===== Картинки для шагов =====
+# ===== Картинки для шагов (см. предупреждение выше про Google Drive) =====
 STEP_IMAGES = {
     0: [  # Шаг 1 - Регистрация на платформе
         "https://drive.google.com/uc?export=view&id=19iCWdqLz8J2cwfhOIJh71LDg6zFkm-rK",
-        "https://drive.google.com/uc?export=view&id=1mjIb2ePe_1VTgKjcch2Ljy5Y_kezyNEc"
+        "https://drive.google.com/uc?export=view&id=1mjIb2ePe_1VTgKjcch2Ljy5Y_kezyNEc",
     ],
     1: [  # Шаг 2 - Заполнение анкеты
-        "https://drive.google.com/uc?export=view&id=1_khnYowuImgHr4NortOtvsZbnsXzY716"
+        "https://drive.google.com/uc?export=view&id=1_khnYowuImgHr4NortOtvsZbnsXzY716",
     ],
     2: [  # Шаг 3 - Прохождение тестирования
         "https://drive.google.com/uc?export=view&id=1I8QlmCim0kDbNawG5lySU5YPrDnK2jmx",
-        "https://drive.google.com/uc?export=view&id=1o-yeU9jBBTVLnPlVsyqZMJsXAv1VYok9"
+        "https://drive.google.com/uc?export=view&id=1o-yeU9jBBTVLnPlVsyqZMJsXAv1VYok9",
     ],
     3: [],  # Шаг 4 - Перейти на сайт (без картинок)
     4: [  # Шаг 5 - Нажать «Начать» и заполнить анкету
         "https://drive.google.com/uc?export=view&id=1s7GsHKpDo-DElr1zHiIvo3-kFN2Ng6CK",
-        "https://drive.google.com/uc?export=view&id=1WA2kyBKsOhEoTkpHcu-qHNuGgJepI5IG"
+        "https://drive.google.com/uc?export=view&id=1WA2kyBKsOhEoTkpHcu-qHNuGgJepI5IG",
     ],
     5: [  # Шаг 6 - Финишная прямая
-        "https://drive.google.com/uc?export=view&id=1mffyx-g4_-5AGzhug-p1CzqVudy_eELE"
-    ]
+        "https://drive.google.com/uc?export=view&id=1mffyx-g4_-5AGzhug-p1CzqVudy_eELE",
+    ],
 }
 
 # ===== Разметка =====
@@ -91,14 +92,16 @@ def kb_main() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("Ближайшие анонсы и мероприятия", callback_data=CB_EVENTS)],
     ])
 
+
 def kb_guide(idx: int, last: int) -> InlineKeyboardMarkup:
     row = []
     if idx > 0:
-        row.append(InlineKeyboardButton("⬅️ Назад", callback_data=f"{CB_GUIDE_PREV}:{idx-1}"))
+        row.append(InlineKeyboardButton("⬅️ Назад", callback_data=f"{CB_GUIDE_PREV}:{idx - 1}"))
     if idx < last:
-        row.append(InlineKeyboardButton("Далее ➡️", callback_data=f"{CB_GUIDE_NEXT}:{idx+1}"))
+        row.append(InlineKeyboardButton("Далее ➡️", callback_data=f"{CB_GUIDE_NEXT}:{idx + 1}"))
     nav = [row] if row else []
     return InlineKeyboardMarkup(nav + [[InlineKeyboardButton("Главное меню", callback_data=CB_GUIDE_MENU)]])
+
 
 # ===== Контент шагов =====
 GUIDE_TEXTS: List[str] = [
@@ -119,7 +122,7 @@ GUIDE_TEXTS: List[str] = [
     "• Отчёты появятся в личном кабинете в течение 48 часов; затем можно выгрузить на hh.ru.",
 
     f"4) Перейти на сайт\n\nЗайди с компьютера: {TEST_LINK}\n"
-    "Вводи данные и ОБЯЗАТЕЛЬНО указывай e‑mail (не телефон).",
+    "Вводи данные и ОБЯЗАТЕЛЬНО указывай e-mail (не телефон).",
 
     "5) Нажать «Начать» и заполнить анкету\n\n"
     "Заполни ФИО и остальные данные. В «Образовании» укажи:\n"
@@ -139,38 +142,46 @@ GUIDE_TEXTS: List[str] = [
 
 LAST_STEP = len(GUIDE_TEXTS) - 1
 
+
 # ===== Прогресс пользователя =====
+# ВАЖНО: хранится только в памяти процесса (context.user_data). Если
+# сервис перезапустится (деплой, сон на бесплатном тарифе Render),
+# сохранённый шаг гайда у всех пользователей обнулится. Для полной
+# надёжности потребуется внешнее хранилище (например, Redis или
+# PicklePersistence/файл), но для текущего масштаба бота это
+# избыточно.
 def get_saved_step(context: ContextTypes.DEFAULT_TYPE) -> int:
     return int(context.user_data.get("guide_step", 0))
+
 
 def set_saved_step(context: ContextTypes.DEFAULT_TYPE, idx: int) -> None:
     context.user_data["guide_step"] = max(0, min(idx, LAST_STEP))
 
+
 # ===== Показ шага =====
 async def send_guide_step(msg_target, idx: int):
-    header = f"Шаг {idx+1}/{LAST_STEP+1}"
+    header = f"Шаг {idx + 1}/{LAST_STEP + 1}"
     text = f"{header}\n\n{GUIDE_TEXTS[idx]}"
     kb = kb_guide(idx, LAST_STEP)
 
-    # Показываем картинки для шага, если они есть
     step_images = STEP_IMAGES.get(idx, [])
     if step_images:
         try:
             if len(step_images) == 1:
-                # Одна картинка
                 await msg_target.reply_photo(photo=step_images[0])
             else:
-                # Несколько картинок
                 media_group = [InputMediaPhoto(img) for img in step_images]
                 await msg_target.reply_media_group(media=media_group)
         except Exception as e:
-            log.warning(f"Не удалось отправить картинки для шага {idx+1}: {e}")
+            log.warning(f"Не удалось отправить картинки для шага {idx + 1}: {e}")
 
-    # Отправляем текст с кнопками
     await msg_target.reply_text(text, reply_markup=kb)
 
+
 # ===== Главное меню =====
-async def show_main_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int, target_message_id: Optional[int] = None) -> None:
+async def show_main_menu(
+    context: ContextTypes.DEFAULT_TYPE, chat_id: int, target_message_id: Optional[int] = None
+) -> None:
     text = "Главное меню. Выбирай действие:"
 
     if target_message_id is not None:
@@ -187,6 +198,7 @@ async def show_main_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int, targe
     sent = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=kb_main())
     context.user_data["last_menu_id"] = sent.message_id
 
+
 # ===== /start =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -198,9 +210,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat.id, greeting)
     await show_main_menu(context, chat.id)
 
+
 # ===== /help =====
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Команды:\n/start — главное меню\n/help — эта справка")
+
 
 # ===== Обработчик кнопок =====
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -214,7 +228,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = (
             "Тестирование проходит на компьютере.\n\n"
             f"1) Перейти на сайт: {TEST_LINK}\n"
-            "2) Зарегистрироваться (или войти), указать e‑mail.\n"
+            "2) Зарегистрироваться (или войти), указать e-mail.\n"
             "3) Открыть раздел «Оценка компетенций» и нажать «Пройти тестирование».\n\n"
             "Нужна пошаговая инструкция? Нажми «Инструкция (по шагам)»."
         )
@@ -245,7 +259,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == CB_EVENTS:
-        # Показываем фото капибары
         try:
             await chat_msg.reply_photo(photo=CAPYBARA_PHOTO_URL)
         except Exception as e:
@@ -268,9 +281,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             link = e.get("link")
             lines.append(f"{i}) {title}" + (f" — {date}" if date else ""))
             if link:
-                buttons.append(
-                    [InlineKeyboardButton(f"Открыть: {title}", url=link)]
-                )
+                buttons.append([InlineKeyboardButton(f"Открыть: {title}", url=link)])
 
         kb = InlineKeyboardMarkup(
             buttons + [[InlineKeyboardButton("Главное меню", callback_data=CB_GUIDE_MENU)]]
@@ -283,7 +294,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_main_menu(context, chat_id)
         return
 
-# ===== Основное инициализирующее приложение FastAPI и PTB =====
+
+# ===== Приложение FastAPI + python-telegram-bot =====
 ptb = (
     Application.builder()
     .token(BOT_TOKEN)
@@ -291,10 +303,10 @@ ptb = (
     .build()
 )
 
-# Регистрируем обработчики
 ptb.add_handler(CommandHandler("start", start))
 ptb.add_handler(CommandHandler("help", help_cmd))
 ptb.add_handler(CallbackQueryHandler(on_button))
+
 
 async def post_init(application):
     try:
@@ -305,7 +317,9 @@ async def post_init(application):
     except Exception as e:
         log.warning(f"set_my_commands не применены: {e}")
 
+
 ptb.post_init = post_init
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -321,7 +335,16 @@ async def lifespan(app: FastAPI):
         yield
         await ptb.stop()
 
+
 app = FastAPI(lifespan=lifespan)
+
+
+@app.get("/health")
+async def health():
+    """Проверка живости сервиса — используй с внешним пингером
+    (UptimeRobot и т.п.), чтобы бесплатный тариф Render не засыпал."""
+    return {"status": "ok"}
+
 
 @app.post("/telegram-webhook")
 async def telegram_webhook(request: Request):
